@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>COVID-19 Analysis Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #080c14;
+  --surface:   #0d1421;
+  --panel:     #111827;
+  --panel2:    #161f30;
+  --border:    #1e2d45;
+  --border2:   #243450;
+  --blue:      #1e90ff;
+  --blue-dim:  #1e90ff33;
+  --blue-glow: #1e90ff66;
+  --red:       #ff2d55;
+  --red-dim:   #ff2d5533;
+  --red-glow:  #ff2d5566;
+  --green:     #00e676;
+  --green-dim: #00e67633;
+  --amber:     #ffc107;
+  --amber-dim: #ffc10733;
+  --text:      #e8f0fe;
+  --muted:     #4a6080;
+  --muted2:    #6a80a0;
+}
+
+html, body { min-height: 100vh; background: var(--bg); color: var(--text); font-family: 'Rajdhani', sans-serif; overflow-x: hidden; }
+
+/* ── SCANLINE OVERLAY ── */
+body::before {
+  content: '';
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+}
+/* ── GRID BG ── */
+body::after {
+  content: '';
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image: linear-gradient(rgba(30,144,255,0.04) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(30,144,255,0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+.dashboard { position: relative; z-index: 1; max-width: 1520px; margin: 0 auto; padding: 0 20px 40px; }
+
+/* ══════════════════════════════════════
+   HEADER
+══════════════════════════════════════ */
+header {
+  padding: 28px 0 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 28px;
+}
+.header-left { display: flex; align-items: center; gap: 20px; }
+.header-icon {
+  width: 52px; height: 52px; border-radius: 12px;
+  background: linear-gradient(135deg, var(--red-dim), var(--blue-dim));
+  border: 1px solid var(--border2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px;
+  box-shadow: 0 0 24px var(--red-glow), inset 0 0 12px rgba(30,144,255,0.1);
+  animation: pulse-icon 3s ease-in-out infinite;
+}
+@keyframes pulse-icon {
+  0%,100% { box-shadow: 0 0 24px var(--red-glow), inset 0 0 12px rgba(30,144,255,0.1); }
+  50%      { box-shadow: 0 0 40px var(--red-glow), inset 0 0 20px rgba(30,144,255,0.2); }
+}
+.header-title h1 {
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(18px, 2.5vw, 30px);
+  font-weight: 900;
+  letter-spacing: 3px;
+  background: linear-gradient(90deg, var(--blue), #fff 50%, var(--red));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  text-shadow: none;
+}
+.header-title p { font-size: 12px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; margin-top: 4px; }
+.header-right { display: flex; align-items: center; gap: 12px; }
+.live-badge {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 20px; padding: 6px 14px;
+  font-family: 'Orbitron', monospace; font-size: 10px; color: var(--green);
+  letter-spacing: 1px;
+}
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: blink 1.2s ease-in-out infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+.date-info { font-size: 12px; color: var(--muted2); font-weight: 500; letter-spacing: 1px; }
+
+/* ══════════════════════════════════════
+   CARDS ROW
+══════════════════════════════════════ */
+.cards-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+
+.card {
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  position: relative; overflow: hidden;
+  transition: transform 0.25s, border-color 0.25s;
+  animation: slideUp 0.5s ease both;
+}
+.card:hover { transform: translateY(-4px); }
+.card::before {
+  content: '';
+  position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  border-radius: 14px 14px 0 0;
+}
+.card::after {
+  content: '';
+  position: absolute; inset: 0; border-radius: 14px;
+  background: radial-gradient(ellipse at top left, var(--card-glow, transparent), transparent 65%);
+  pointer-events: none;
+}
+
+.card.blue  { --card-glow: rgba(30,144,255,0.12); border-color: #1e3a5f; }
+.card.blue::before  { background: linear-gradient(90deg, var(--blue), transparent); }
+.card.blue:hover  { border-color: var(--blue); box-shadow: 0 8px 32px var(--blue-dim); }
+
+.card.red   { --card-glow: rgba(255,45,85,0.12); border-color: #4a1528; }
+.card.red::before   { background: linear-gradient(90deg, var(--red), transparent); }
+.card.red:hover   { border-color: var(--red); box-shadow: 0 8px 32px var(--red-dim); }
+
+.card.green { --card-glow: rgba(0,230,118,0.10); border-color: #0a3020; }
+.card.green::before { background: linear-gradient(90deg, var(--green), transparent); }
+.card.green:hover { border-color: var(--green); box-shadow: 0 8px 32px var(--green-dim); }
+
+.card.amber { --card-glow: rgba(255,193,7,0.10); border-color: #3a2800; }
+.card.amber::before { background: linear-gradient(90deg, var(--amber), transparent); }
+.card.amber:hover { border-color: var(--amber); box-shadow: 0 8px 32px var(--amber-dim); }
+
+.card-icon { font-size: 28px; margin-bottom: 10px; display: block; }
+.card-label { font-size: 11px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--muted2); margin-bottom: 8px; }
+.card-value { font-family: 'Orbitron', monospace; font-size: clamp(20px, 2vw, 28px); font-weight: 700; line-height: 1; }
+.card.blue  .card-value { color: var(--blue); text-shadow: 0 0 20px var(--blue-glow); }
+.card.red   .card-value { color: var(--red);  text-shadow: 0 0 20px var(--red-glow); }
+.card.green .card-value { color: var(--green); }
+.card.amber .card-value { color: var(--amber); }
+.card-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+.card:nth-child(1) { animation-delay: 0.05s; }
+.card:nth-child(2) { animation-delay: 0.10s; }
+.card:nth-child(3) { animation-delay: 0.15s; }
+.card:nth-child(4) { animation-delay: 0.20s; }
+
+/* ══════════════════════════════════════
+   LINE CHART (FULL WIDTH)
+══════════════════════════════════════ */
+.line-row { margin-bottom: 20px; }
+
+/* ══════════════════════════════════════
+   PANEL SHARED
+══════════════════════════════════════ */
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px 22px;
+  position: relative;
+  animation: slideUp 0.5s ease 0.25s both;
+}
+.panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.panel-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted2);
+  display: flex; align-items: center; gap: 8px;
+}
+.panel-title .accent-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+}
+.panel-legend { display: flex; gap: 16px; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted2); font-weight: 500; }
+.legend-dot { width: 10px; height: 3px; border-radius: 2px; }
+
+/* ══════════════════════════════════════
+   MID ROW: Bar + Map
+══════════════════════════════════════ */
+.mid-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+
+/* ══════════════════════════════════════
+   BOTTOM ROW: Slicer + Insight
+══════════════════════════════════════ */
+.bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+
+/* ── PIE ROW ── */
+.pie-row { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; margin-bottom: 20px; }
+
+/* ══════════════════════════════════════
+   MAP
+══════════════════════════════════════ */
+#map-svg { width: 100%; display: block; }
+.map-wrap { position: relative; }
+.map-legend-wrap {
+  position: absolute; bottom: 12px; left: 16px;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; color: var(--muted2); font-family: 'Rajdhani', sans-serif;
+}
+.map-grad { width: 80px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #1e3a5f, #1e90ff, #ff2d55); }
+.map-tooltip {
+  position: fixed; display: none;
+  background: var(--panel2); border: 1px solid var(--blue);
+  border-radius: 10px; padding: 10px 14px;
+  font-size: 12px; pointer-events: none; z-index: 999;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  min-width: 160px;
+}
+.map-tooltip .tt-name { font-family: 'Orbitron', monospace; font-size: 11px; color: var(--blue); margin-bottom: 6px; }
+.map-tooltip .tt-row { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--muted2); margin-bottom: 2px; }
+.map-tooltip .tt-row span:last-child { color: var(--text); font-weight: 600; }
+
+/* ══════════════════════════════════════
+   SLICER
+══════════════════════════════════════ */
+.slicer-controls { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.slicer-search {
+  flex: 1; min-width: 140px;
+  background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 8px; padding: 8px 12px;
+  color: var(--text); font-family: 'Rajdhani', sans-serif; font-size: 13px;
+  outline: none; transition: border-color 0.2s;
+}
+.slicer-search:focus { border-color: var(--blue); }
+.slicer-search::placeholder { color: var(--muted); }
+.slicer-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; max-height: 160px; overflow-y: auto; padding-right: 2px; }
+.slicer-grid::-webkit-scrollbar { width: 4px; }
+.slicer-grid::-webkit-scrollbar-track { background: var(--panel); }
+.slicer-grid::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+.slicer-btn {
+  background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 8px;
+  color: var(--muted2); font-family: 'Rajdhani', sans-serif;
+  font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: all 0.18s;
+  text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.slicer-btn:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-dim); }
+.slicer-btn.active { border-color: var(--blue); color: #fff; background: linear-gradient(135deg, #1e3a6e, #1e5080); box-shadow: 0 0 12px var(--blue-dim); }
+.slicer-result {
+  margin-top: 14px;
+  background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 10px; padding: 14px 16px;
+}
+.slicer-result .sr-country { font-family: 'Orbitron', monospace; font-size: 13px; color: var(--blue); margin-bottom: 10px; }
+.sr-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.sr-stat { text-align: center; }
+.sr-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.sr-val { font-family: 'Orbitron', monospace; font-size: 14px; font-weight: 700; }
+.sr-val.c { color: var(--blue); }
+.sr-val.d { color: var(--red); }
+.sr-val.r { color: var(--green); }
+
+/* ══════════════════════════════════════
+   INSIGHT BOX
+══════════════════════════════════════ */
+.insight-box {
+  background: linear-gradient(135deg, #0d1525, #111827);
+  border: 1px solid #1e3a5f;
+  border-radius: 14px; padding: 22px;
+  position: relative; overflow: hidden;
+}
+.insight-box::before {
+  content: ''; position: absolute;
+  top: -40px; right: -40px;
+  width: 160px; height: 160px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,45,85,0.1), transparent 70%);
+  pointer-events: none;
+}
+.insight-box::after {
+  content: ''; position: absolute;
+  bottom: -30px; left: -30px;
+  width: 120px; height: 120px; border-radius: 50%;
+  background: radial-gradient(circle, rgba(30,144,255,0.1), transparent 70%);
+  pointer-events: none;
+}
+.insight-title {
+  font-family: 'Orbitron', monospace; font-size: 11px;
+  color: var(--muted2); letter-spacing: 2px;
+  text-transform: uppercase; margin-bottom: 16px;
+  display: flex; align-items: center; gap: 8px;
+}
+.insight-icon { font-size: 18px; }
+.insight-items { display: flex; flex-direction: column; gap: 12px; position: relative; z-index: 1; }
+.insight-item {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 10px 12px; background: rgba(255,255,255,0.025);
+  border-radius: 8px; border-left: 3px solid transparent;
+  transition: background 0.2s;
+}
+.insight-item:hover { background: rgba(255,255,255,0.04); }
+.insight-item.i-blue { border-left-color: var(--blue); }
+.insight-item.i-red  { border-left-color: var(--red); }
+.insight-item.i-green{ border-left-color: var(--green); }
+.insight-item.i-amber{ border-left-color: var(--amber); }
+.insight-emoji { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.insight-text { font-size: 12.5px; line-height: 1.6; color: var(--muted2); font-weight: 500; }
+.insight-text strong { color: var(--text); font-weight: 700; }
+.insight-highlight { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 700; font-family: 'Orbitron', monospace; }
+.ih-blue  { background: var(--blue-dim); color: var(--blue); }
+.ih-red   { background: var(--red-dim);  color: var(--red); }
+.ih-green { background: var(--green-dim);color: var(--green); }
+
+/* ══════════════════════════════════════
+   ANIMATIONS
+══════════════════════════════════════ */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ══════════════════════════════════════
+   CHART SCROLL for bar
+══════════════════════════════════════ */
+.bar-scroll { height: 340px; overflow-y: auto; padding-right: 4px; }
+.bar-scroll::-webkit-scrollbar { width: 4px; }
+.bar-scroll::-webkit-scrollbar-track { background: var(--panel); }
+.bar-scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+@media(max-width:900px) {
+  .cards-row { grid-template-columns: 1fr 1fr; }
+  .mid-row, .bottom-row, .pie-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="dashboard">
+
+  <!-- ══ HEADER ══ -->
+  <header>
+    <div class="header-left">
+      <div class="header-icon">🦠</div>
+      <div class="header-title">
+        <h1>COVID — 19 ANALYSIS</h1>
+        <p>Global Pandemic Intelligence Dashboard · 231 Countries & Territories</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="live-badge"><div class="live-dot"></div>LIVE DATA</div>
+      <div class="date-info">📅 Data as of June 30, 2024</div>
+    </div>
+  </header>
+
+  <!-- ══ CARDS ══ -->
+  <div class="cards-row">
+    <div class="card blue">
+      <span class="card-icon">🌐</span>
+      <div class="card-label">Total Cases</div>
+      <div class="card-value" id="c-cases">704.8M</div>
+      <div class="card-sub">↑ Global confirmed infections</div>
+    </div>
+    <div class="card red">
+      <span class="card-icon">💔</span>
+      <div class="card-label">Total Deaths</div>
+      <div class="card-value" id="c-deaths">7.01M</div>
+      <div class="card-sub">↑ Lives lost worldwide</div>
+    </div>
+    <div class="card green">
+      <span class="card-icon">💚</span>
+      <div class="card-label">Total Recovered</div>
+      <div class="card-value" id="c-recovered">675.6M</div>
+      <div class="card-sub">↑ Successful recoveries</div>
+    </div>
+    <div class="card amber">
+      <span class="card-icon">📊</span>
+      <div class="card-label">Death Rate</div>
+      <div class="card-value" id="c-dr">0.99%</div>
+      <div class="card-sub">↓ Global case fatality rate</div>
+    </div>
+  </div>
+
+  <!-- ══ LINE CHART ══ -->
+  <div class="line-row">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span class="accent-dot" style="background:var(--blue); box-shadow:0 0 8px var(--blue)"></span>
+          Global Trend — Cases vs. Deaths Over Time
+        </div>
+        <div class="panel-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--blue)"></div>Total Cases</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Total Deaths</div>
+        </div>
+      </div>
+      <canvas id="lineChart" height="110"></canvas>
+    </div>
+  </div>
+
+  <!-- ══ MID ROW: Bar + Map + Pie ══ -->
+  <div class="mid-row">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="accent-dot" style="background:var(--blue);box-shadow:0 0 8px var(--blue)"></span>Top Countries — Total Cases (Descending)</div>
+      </div>
+      <div class="bar-scroll"><canvas id="barChart"></canvas></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div class="panel map-wrap" style="flex:1;">
+        <div class="panel-header">
+          <div class="panel-title"><span class="accent-dot" style="background:var(--red);box-shadow:0 0 8px var(--red)"></span>World Map — COVID-19 Impact</div>
+        </div>
+        <svg id="map-svg" viewBox="0 0 800 400"></svg>
+        <div class="map-legend-wrap">
+          <span>Low</span>
+          <div class="map-grad"></div>
+          <span>High</span>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title"><span class="accent-dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span>Cases by Continent</div>
+        </div>
+        <canvas id="pieChart" height="160"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ BOTTOM ROW: Slicer + Insight ══ -->
+  <div class="bottom-row">
+    <!-- SLICER -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title"><span class="accent-dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span>Country Filter — Cases, Deaths & Recoveries</div>
+      </div>
+      <div class="slicer-controls">
+        <input class="slicer-search" type="text" id="slicerSearch" placeholder="🔍  Search country..." oninput="filterSlicer()"/>
+      </div>
+      <div class="slicer-grid" id="slicerGrid"></div>
+      <div class="slicer-result" id="slicerResult" style="display:none">
+        <div class="sr-country" id="srCountry">—</div>
+        <div class="sr-stats">
+          <div class="sr-stat"><div class="sr-label">Cases</div><div class="sr-val c" id="srCases">—</div></div>
+          <div class="sr-stat"><div class="sr-label">Deaths</div><div class="sr-val d" id="srDeaths">—</div></div>
+          <div class="sr-stat"><div class="sr-label">Recovered</div><div class="sr-val r" id="srRecovered">—</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INSIGHT BOX -->
+    <div class="insight-box">
+      <div class="insight-title"><span class="insight-icon">🧠</span>Dashboard Insights — Overall Analysis</div>
+      <div class="insight-items">
+        <div class="insight-item i-blue">
+          <span class="insight-emoji">🌍</span>
+          <div class="insight-text">
+            The pandemic affected <strong>231 countries</strong>, recording a staggering <span class="insight-highlight ih-blue">704.8 Million</span> confirmed cases globally by June 2024. <strong>Europe</strong> led with 253M cases, followed closely by <strong>Asia</strong> at 221M.
+          </div>
+        </div>
+        <div class="insight-item i-red">
+          <span class="insight-emoji">⚠️</span>
+          <div class="insight-text">
+            <strong>USA</strong> topped the world with <span class="insight-highlight ih-red">111.8M cases</span> and 1.22M deaths — the highest of any single country. <strong>Yemen</strong> recorded the world's highest fatality rate at <span class="insight-highlight ih-red">18.07%</span>.
+          </div>
+        </div>
+        <div class="insight-item i-green">
+          <span class="insight-emoji">💊</span>
+          <div class="insight-text">
+            Global recovery stands at <span class="insight-highlight ih-green">675.6M</span> — a <strong>95.9% recovery rate</strong>, reflecting the effectiveness of global vaccination and medical response. <strong>S-Korea</strong> led recovery at 99.9%.
+          </div>
+        </div>
+        <div class="insight-item i-blue">
+          <span class="insight-emoji">📈</span>
+          <div class="insight-text">
+            The overall global <strong>case fatality rate</strong> is <span class="insight-highlight ih-blue">0.99%</span>, down from early pandemic peaks. <strong>Africa</strong> had the lowest testing coverage, making its <span class="insight-highlight ih-red">258K deaths</span> likely an undercount.
+          </div>
+        </div>
+        <div class="insight-item i-amber" style="border-left-color:var(--amber)">
+          <span class="insight-emoji">🔬</span>
+          <div class="insight-text">
+            Over <strong>7 Billion tests</strong> were conducted globally. <strong>Europe</strong> and <strong>North America</strong> dominated testing, enabling better case detection. Countries with higher testing showed more accurate death and recovery ratios.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- MAP TOOLTIP -->
+<div class="map-tooltip" id="mapTooltip"></div>
+
+<script>
+// ══════════════════════════════════════
+// DATA
+// ══════════════════════════════════════
+const SUMMARY = {total_cases:704753890, total_deaths:7010681, total_recovered:675619811, death_rate:0.99};
+
+const TOP20 = [
+  {country:"USA",cases:111820082,deaths:1219487,recovered:109814428},
+  {country:"India",cases:45035393,deaths:533570,recovered:null},
+  {country:"France",cases:40138560,deaths:167642,recovered:39970918},
+  {country:"Germany",cases:38828995,deaths:183027,recovered:38240600},
+  {country:"Brazil",cases:38743918,deaths:711380,recovered:36249161},
+  {country:"S-Korea",cases:34571873,deaths:35934,recovered:34535939},
+  {country:"Japan",cases:33803572,deaths:74694,recovered:null},
+  {country:"Italy",cases:26723249,deaths:196487,recovered:26361218},
+  {country:"UK",cases:24910387,deaths:232112,recovered:24678275},
+  {country:"Russia",cases:24124215,deaths:402756,recovered:23545818},
+  {country:"Turkey",cases:17232066,deaths:102174,recovered:null},
+  {country:"Spain",cases:13914811,deaths:121760,recovered:13762417},
+  {country:"Australia",cases:11853144,deaths:24414,recovered:11820014},
+  {country:"Vietnam",cases:11625195,deaths:43206,recovered:10640971},
+  {country:"Taiwan",cases:10241523,deaths:19005,recovered:10222518},
+  {country:"Argentina",cases:10044957,deaths:130797,recovered:9914160},
+  {country:"Netherlands",cases:8628483,deaths:22946,recovered:null},
+  {country:"Iran",cases:7620020,deaths:146990,recovered:7441630},
+  {country:"Mexico",cases:7702809,deaths:334958,recovered:5736455},
+  {country:"Indonesia",cases:6829104,deaths:161927,recovered:6667177},
+];
+
+const CONTINENTS = [
+  {continent:"Africa",cases:12860924,deaths:258892},
+  {continent:"Asia",cases:221500265,deaths:1553662},
+  {continent:"Europe",cases:253406198,deaths:2101824},
+  {continent:"North-America",cases:131889132,deaths:1695941},
+  {continent:"Oceania",cases:14895771,deaths:33015},
+  {continent:"South-America",cases:70200879,deaths:1367332},
+];
+
+const TIMELINE = {
+  labels:["Jan'20","Apr'20","Jul'20","Oct'20","Jan'21","Apr'21","Jul'21","Oct'21","Jan'22","Apr'22","Jul'22","Oct'22","Jan'23","Apr'23","Jul'23","Oct'23","Jan'24","Jun'24"],
+  cases:[704754,5632432,17594847,42285234,84570467,155045855,225521243,295996631,387614839,472424206,543096697,597452419,634278501,648427369,669515696,683664994,697813293,704753890],
+  deaths:[10147,76449,260595,601369,1161832,2101831,2661418,3221005,3927614,4644895,5256360,5774434,6095834,6235232,6378779,6692901,6860181,7010681]
+};
+
+const COUNTRY_DATA = {"Saint-Helena":{cases:2166,deaths:null,recovered:2},"Falkland-Islands":{cases:1930,deaths:null,recovered:1930},"Montserrat":{cases:1403,deaths:8,recovered:1376},"Vatican-City":{cases:29,deaths:null,recovered:29},"Niue":{cases:1115,deaths:null,recovered:null},"Saint-Barthelemy":{cases:3593,deaths:null,recovered:null},"Western-Sahara":{cases:10,deaths:1,recovered:8},"Anguilla":{cases:3728,deaths:null,recovered:null},"Wallis-and-Futuna":{cases:454,deaths:7,recovered:438},"Saint-Pierre-Miquelon":{cases:3694,deaths:1,recovered:3668},"Turks-and-Caicos":{cases:7413,deaths:36,recovered:7335},"Cayman-Islands":{cases:10218,deaths:21,recovered:9871},"Saint-Kitts-and-Nevis":{cases:6840,deaths:44,recovered:6795},"Tokelau":{cases:69,deaths:null,recovered:null},"Cook-Islands":{cases:7398,deaths:null,recovered:null},"Tuvalu":{cases:2938,deaths:null,recovered:null},"Nauru":{cases:5202,deaths:2,recovered:5157},"Palau":{cases:6199,deaths:8,recovered:6166},"Kiribati":{cases:4039,deaths:13,recovered:4026},"Micronesia":{cases:30538,deaths:null,recovered:null},"Marshall-Islands":{cases:15693,deaths:17,recovered:null},"Samoa":{cases:19441,deaths:31,recovered:null},"Vanuatu":{cases:12062,deaths:14,recovered:11967},"Tonga":{cases:16082,deaths:12,recovered:null},"Solomon-Islands":{cases:25710,deaths:163,recovered:null},"Timor-Leste":{cases:23230,deaths:138,recovered:22988},"Brunei":{cases:280773,deaths:225,recovered:279859},"Bhutan":{cases:62792,deaths:21,recovered:62761},"Maldives":{cases:218419,deaths:311,recovered:217543},"Seychelles":{cases:44980,deaths:175,recovered:44786},"Comoros":{cases:9018,deaths:160,recovered:8798},"Mauritius":{cases:329556,deaths:1052,recovered:328330},"Cape-Verde":{cases:63073,deaths:430,recovered:62500},"Djibouti":{cases:15982,deaths:189,recovered:15793},"Eritrea":{cases:10191,deaths:103,recovered:10088},"Lesotho":{cases:37198,deaths:711,recovered:36258},"Gambia":{cases:12021,deaths:372,recovered:11620},"Eswatini":{cases:73026,deaths:1420,recovered:66684},"Malawi":{cases:89174,deaths:2686,recovered:85853},"Niger":{cases:10124,deaths:311,recovered:7706},"Sierra-Leone":{cases:10003,deaths:126,recovered:9877},"Central-African-Republic":{cases:15568,deaths:113,recovered:10813},"Chad":{cases:7901,deaths:194,recovered:4917},"Liberia":{cases:8063,deaths:294,recovered:5765},"Burkina-Faso":{cases:21995,deaths:397,recovered:21532},"Guinea":{cases:38079,deaths:464,recovered:34660},"Benin":{cases:29124,deaths:163,recovered:28957},"DR-Congo":{cases:101071,deaths:1337,recovered:91997},"Togo":{cases:39578,deaths:290,recovered:38982},"Mali":{cases:33003,deaths:742,recovered:27551},"Senegal":{cases:89193,deaths:1971,recovered:87222},"Congo":{cases:26424,deaths:388,recovered:25936},"Madagascar":{cases:68131,deaths:1418,recovered:66665},"Mozambique":{cases:231612,deaths:2207,recovered:226551},"Tanzania":{cases:40671,deaths:822,recovered:null},"Rwanda":{cases:133070,deaths:1469,recovered:131601},"Uganda":{cases:172352,deaths:3630,recovered:100128},"Angola":{cases:105292,deaths:1933,recovered:103215},"Zambia":{cases:343135,deaths:4057,recovered:338928},"Somalia":{cases:27334,deaths:1361,recovered:4923},"Sudan":{cases:63993,deaths:5046,recovered:22965},"Zimbabwe":{cases:265126,deaths:5703,recovered:259217},"Gabon":{cases:49489,deaths:305,recovered:49045},"Ghana":{cases:171511,deaths:1462,recovered:170006},"Ivory-Coast":{cases:88306,deaths:826,recovered:86908},"Cameroon":{cases:124696,deaths:1965,recovered:122731},"Namibia":{cases:171946,deaths:4062,recovered:167740},"Botswana":{cases:329871,deaths:2752,recovered:326971},"Libya":{cases:508650,deaths:6464,recovered:502186},"Algeria":{cases:272038,deaths:6881,recovered:182988},"Tunisia":{cases:1172186,deaths:29291,recovered:1142895},"Morocco":{cases:1274819,deaths:16296,recovered:1257989},"Nigeria":{cases:267077,deaths:3155,recovered:259791},"Kenya":{cases:344988,deaths:5688,recovered:339300},"Ethiopia":{cases:502048,deaths:7572,recovered:494476},"South-Africa":{cases:4072533,deaths:102595,recovered:3969938},"Egypt":{cases:516023,deaths:24613,recovered:491390},"Yemen":{cases:11945,deaths:2159,recovered:9396},"Syria":{cases:57743,deaths:3165,recovered:54406},"Afghanistan":{cases:234118,deaths:7900,recovered:226180},"Myanmar":{cases:634434,deaths:19485,recovered:614932},"Laos":{cases:215972,deaths:757,recovered:214960},"Cambodia":{cases:138451,deaths:3056,recovered:135395},"Nepal":{cases:1002632,deaths:12020,recovered:990612},"Bangladesh":{cases:2050193,deaths:29479,recovered:2013714},"Pakistan":{cases:1576143,deaths:30639,recovered:1534895},"Indonesia":{cases:6829104,deaths:161927,recovered:6667177},"Philippines":{cases:4183831,deaths:66380,recovered:4117451},"Malaysia":{cases:5162273,deaths:37239,recovered:5124892},"Sri-Lanka":{cases:671983,deaths:16876,recovered:655107},"Thailand":{cases:4728394,deaths:34012,recovered:null},"China":{cases:99323199,deaths:122144,recovered:99201055},"Vietnam":{cases:11625195,deaths:43206,recovered:10640971},"Taiwan":{cases:10241523,deaths:19005,recovered:10222518},"S-Korea":{cases:34571873,deaths:35934,recovered:34535939},"Japan":{cases:33803572,deaths:74694,recovered:null},"Turkey":{cases:17232066,deaths:102174,recovered:null},"Iran":{cases:7620020,deaths:146990,recovered:7441630},"Iraq":{cases:2467282,deaths:25389,recovered:2441893},"India":{cases:45035393,deaths:533570,recovered:null},"Saudi-Arabia":{cases:840871,deaths:9710,recovered:830882},"Israel":{cases:4840742,deaths:12427,recovered:null},"Jordan":{cases:1741649,deaths:14080,recovered:1727569},"Lebanon":{cases:1219734,deaths:10616,recovered:1209118},"UK":{cases:24910387,deaths:232112,recovered:24678275},"Russia":{cases:24124215,deaths:402756,recovered:23545818},"Italy":{cases:26723249,deaths:196487,recovered:26361218},"Spain":{cases:13914811,deaths:121760,recovered:13762417},"Germany":{cases:38828995,deaths:183027,recovered:38240600},"France":{cases:40138560,deaths:167642,recovered:39970918},"Portugal":{cases:6432088,deaths:25671,recovered:6406417},"Belgium":{cases:4792764,deaths:34757,recovered:4758007},"Netherlands":{cases:8628483,deaths:22946,recovered:null},"Sweden":{cases:2700000,deaths:24000,recovered:null},"Poland":{cases:6505207,deaths:119444,recovered:5966393},"Ukraine":{cases:5540707,deaths:117059,recovered:5423648},"Romania":{cases:3434046,deaths:68071,recovered:3367003},"Hungary":{cases:2181765,deaths:48713,recovered:2133052},"Greece":{cases:6008007,deaths:36764,recovered:null},"Serbia":{cases:2603879,deaths:17659,recovered:null},"Bulgaria":{cases:1289065,deaths:38046,recovered:1063038},"Bosnia-and-Herzegovina":{cases:403615,deaths:16388,recovered:null},"Czechia":{cases:4633977,deaths:42546,recovered:4591431},"Slovakia":{cases:2044011,deaths:20897,recovered:2001777},"Croatia":{cases:1282980,deaths:17430,recovered:null},"Denmark":{cases:3569498,deaths:7358,recovered:null},"Norway":{cases:1527882,deaths:4225,recovered:null},"Finland":{cases:1438032,deaths:7547,recovered:null},"Switzerland":{cases:4411563,deaths:14495,recovered:null},"Austria":{cases:5970880,deaths:22290,recovered:5948590},"Ireland":{cases:1768463,deaths:9986,recovered:null},"Canada":{cases:4770748,deaths:58428,recovered:null},"Mexico":{cases:7702809,deaths:334958,recovered:5736455},"USA":{cases:111820082,deaths:1219487,recovered:109814428},"Cuba":{cases:1113375,deaths:8529,recovered:1104821},"Guatemala":{cases:1291891,deaths:19853,recovered:null},"Honduras":{cases:472803,deaths:10874,recovered:133779},"Panama":{cases:1004978,deaths:8288,recovered:996690},"Costa-Rica":{cases:1188680,deaths:9427,recovered:1179253},"Argentina":{cases:10044957,deaths:130797,recovered:9914160},"Chile":{cases:5338388,deaths:64495,recovered:5273893},"Colombia":{cases:6368063,deaths:142785,recovered:6225278},"Peru":{cases:4572667,deaths:222161,recovered:4350506},"Brazil":{cases:38743918,deaths:711380,recovered:36249161},"Venezuela":{cases:553018,deaths:5787,recovered:547231},"Ecuador":{cases:1063507,deaths:36062,recovered:null},"Bolivia":{cases:1190567,deaths:22434,recovered:1137600},"Australia":{cases:11853144,deaths:24414,recovered:11820014},"New-Zealand":{cases:2880897,deaths:4101,recovered:null},"Papua-New-Guinea":{cases:49093,deaths:675,recovered:null}};
+
+const ALL_COUNTRIES = Object.keys(COUNTRY_DATA).sort();
+
+// ══════════════════════════════════════
+// UTILS
+// ══════════════════════════════════════
+function fmt(n) {
+  if (n === null || n === undefined) return '—';
+  if (n >= 1e9) return (n/1e9).toFixed(2)+'B';
+  if (n >= 1e6) return (n/1e6).toFixed(2)+'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
+  return Math.round(n).toLocaleString();
+}
+function fmtFull(n) {
+  if (!n) return '—';
+  return n.toLocaleString();
+}
+
+// ══════════════════════════════════════
+// COUNTER ANIMATION
+// ══════════════════════════════════════
+function animCounter(el, target, suffix='', dec=0) {
+  let start = 0, steps = 80, dur = 2000;
+  const inc = target / steps;
+  const timer = setInterval(() => {
+    start = Math.min(start + inc, target);
+    const v = start >= 1e9 ? (start/1e9).toFixed(2)+'B'
+            : start >= 1e6 ? (start/1e6).toFixed(1)+'M'
+            : start.toFixed(dec);
+    el.textContent = v + suffix;
+    if (start >= target) clearInterval(timer);
+  }, dur / steps);
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  animCounter(document.getElementById('c-cases'),   SUMMARY.total_cases);
+  animCounter(document.getElementById('c-deaths'),  SUMMARY.total_deaths);
+  animCounter(document.getElementById('c-recovered'),SUMMARY.total_recovered);
+  animCounter(document.getElementById('c-dr'),       SUMMARY.death_rate, '%', 2);
+  buildLineChart();
+  buildBarChart();
+  buildPieChart();
+  buildMap();
+  buildSlicer();
+});
+
+// ══════════════════════════════════════
+// LINE CHART
+// ══════════════════════════════════════
+function buildLineChart() {
+  const ctx = document.getElementById('lineChart');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: TIMELINE.labels,
+      datasets: [
+        {
+          label: 'Total Cases',
+          data: TIMELINE.cases,
+          borderColor: '#1e90ff',
+          backgroundColor: 'rgba(30,144,255,0.08)',
+          borderWidth: 2.5,
+          pointRadius: 3,
+          pointBackgroundColor: '#1e90ff',
+          pointHoverRadius: 6,
+          tension: 0.4,
+          fill: true,
+          yAxisID: 'y',
+        },
+        {
+          label: 'Total Deaths',
+          data: TIMELINE.deaths,
+          borderColor: '#ff2d55',
+          backgroundColor: 'rgba(255,45,85,0.06)',
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: '#ff2d55',
+          pointHoverRadius: 6,
+          tension: 0.4,
+          fill: true,
+          yAxisID: 'y1',
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#161f30', borderColor: '#1e3a5f', borderWidth: 1,
+          titleColor: '#4a90d9', bodyColor: '#a0b8d0',
+          callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.raw)}` }
+        }
+      },
+      scales: {
+        x: { grid: { color: 'rgba(30,60,90,0.3)' }, ticks: { color: '#4a6080', font: { size: 10 } } },
+        y: {
+          position: 'left',
+          grid: { color: 'rgba(30,60,90,0.3)' },
+          ticks: { color: '#1e90ff', font: { size: 10 }, callback: v => fmt(v) }
+        },
+        y1: {
+          position: 'right',
+          grid: { drawOnChartArea: false },
+          ticks: { color: '#ff2d55', font: { size: 10 }, callback: v => fmt(v) }
+        }
+      }
+    }
+  });
+}
+
+// ══════════════════════════════════════
+// BAR CHART
+// ══════════════════════════════════════
+function buildBarChart() {
+  const sorted = [...TOP20].sort((a,b) => b.cases - a.cases);
+  const canvas = document.getElementById('barChart');
+  canvas.height = sorted.length * 28;
+
+  new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: sorted.map(c => c.country),
+      datasets: [{
+        label: 'Total Cases',
+        data: sorted.map(c => c.cases),
+        backgroundColor: sorted.map((_, i) => {
+          const alpha = 0.5 + (sorted.length - i) / sorted.length * 0.45;
+          return `rgba(30,144,255,${alpha})`;
+        }),
+        borderColor: '#1e90ff',
+        borderWidth: 1,
+        borderRadius: 4,
+        hoverBackgroundColor: '#1e90ffcc',
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#161f30', borderColor: '#1e3a5f', borderWidth: 1,
+          titleColor: '#4a90d9', bodyColor: '#a0b8d0',
+          callbacks: { label: ctx => ` Cases: ${fmtFull(ctx.raw)}` }
+        }
+      },
+      scales: {
+        x: { grid: { color: 'rgba(30,60,90,0.3)' }, ticks: { color: '#4a6080', font: { size: 10 }, callback: v => fmt(v) } },
+        y: { grid: { display: false }, ticks: { color: '#a0b8d0', font: { size: 11, weight: '600' } } }
+      }
+    }
+  });
+}
+
+// ══════════════════════════════════════
+// PIE CHART
+// ══════════════════════════════════════
+function buildPieChart() {
+  const COLORS = ['#ffd166','#06d6a0','#1e90ff','#ff2d55','#a663cc','#00b4d8'];
+  new Chart(document.getElementById('pieChart'), {
+    type: 'doughnut',
+    data: {
+      labels: CONTINENTS.map(c => c.continent),
+      datasets: [{
+        data: CONTINENTS.map(c => c.cases),
+        backgroundColor: COLORS.map(c => c + 'bb'),
+        borderColor: COLORS,
+        borderWidth: 2,
+        hoverOffset: 8,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      cutout: '58%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { color: '#6a80a0', font: { size: 10 }, boxWidth: 10, padding: 10 }
+        },
+        tooltip: {
+          backgroundColor: '#161f30', borderColor: '#1e3a5f', borderWidth: 1,
+          callbacks: { label: ctx => ` ${ctx.label}: ${fmt(ctx.raw)}` }
+        }
+      }
+    }
+  });
+}
+
+// ══════════════════════════════════════
+// WORLD MAP (D3)
+// ══════════════════════════════════════
+function buildMap() {
+  const svg = d3.select('#map-svg');
+  const W = 800, H = 400;
+  svg.attr('viewBox', `0 0 ${W} ${H}`);
+
+  const projection = d3.geoNaturalEarth1()
+    .scale(145).translate([W/2, H/2]);
+  const path = d3.geoPath().projection(projection);
+
+  const maxCases = Math.max(...Object.values(COUNTRY_DATA).map(d => d.cases || 0));
+  const colorScale = d3.scaleSequential()
+    .domain([0, Math.log(maxCases)])
+    .interpolator(d3.interpolate('#0d2040', '#1e90ff'));
+
+  const nameMap = {
+    "United States of America":"USA","United States":"USA","Brasil":"Brazil",
+    "Russian Federation":"Russia","United Kingdom":"UK","Republic of Korea":"S-Korea",
+    "Democratic Republic of the Congo":"DR-Congo","Czechia":"Czechia",
+    "Viet Nam":"Vietnam","Iran (Islamic Republic of)":"Iran",
+    "Syrian Arab Republic":"Syria","Bolivia (Plurinational State of)":"Bolivia",
+    "Venezuela (Bolivarian Republic of)":"Venezuela","Tanzania, United Republic of":"Tanzania",
+    "Korea, Republic of":"S-Korea","China, mainland":"China",
+    "Lao People's Democratic Republic":"Laos",
+    "Bosnia and Herzegovina":"Bosnia-and-Herzegovina",
+    "North Macedonia":"North-Macedonia","Côte d'Ivoire":"Ivory-Coast",
+  };
+
+  const tip = document.getElementById('mapTooltip');
+
+  fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+    .then(r => r.json())
+    .then(world => {
+      const countries = topojson.feature(world, world.objects.countries);
+
+      svg.selectAll('.country')
+        .data(countries.features)
+        .join('path')
+        .attr('class', 'country')
+        .attr('d', path)
+        .attr('fill', d => {
+          const name = d.properties && d.properties.name;
+          const lookup = nameMap[name] || name;
+          const cd = COUNTRY_DATA[lookup];
+          if (!cd || !cd.cases) return '#131e2e';
+          return colorScale(Math.log(cd.cases));
+        })
+        .attr('stroke', '#1e3a5f')
+        .attr('stroke-width', 0.4)
+        .style('cursor', 'pointer')
+        .on('mousemove', function(event, d) {
+          const name = d.properties && d.properties.name;
+          const lookup = nameMap[name] || name;
+          const cd = COUNTRY_DATA[lookup];
+          d3.select(this).attr('stroke', '#1e90ff').attr('stroke-width', 1.5);
+          tip.style.display = 'block';
+          tip.style.left = (event.clientX + 14) + 'px';
+          tip.style.top  = (event.clientY - 10) + 'px';
+          tip.innerHTML = `
+            <div class="tt-name">${name || 'Unknown'}</div>
+            <div class="tt-row"><span>Cases</span><span style="color:#1e90ff">${cd ? fmt(cd.cases) : '—'}</span></div>
+            <div class="tt-row"><span>Deaths</span><span style="color:#ff2d55">${cd ? fmt(cd.deaths) : '—'}</span></div>
+            <div class="tt-row"><span>Recovered</span><span style="color:#00e676">${cd ? fmt(cd.recovered) : '—'}</span></div>`;
+        })
+        .on('mouseleave', function() {
+          d3.select(this).attr('stroke', '#1e3a5f').attr('stroke-width', 0.4);
+          tip.style.display = 'none';
+        });
+    })
+    .catch(() => {
+      svg.append('text').attr('x', W/2).attr('y', H/2)
+        .attr('text-anchor','middle').attr('fill','#4a6080')
+        .attr('font-family','Rajdhani').attr('font-size','14')
+        .text('Map unavailable — connect to internet to load');
+    });
+}
+
+// ══════════════════════════════════════
+// SLICER
+// ══════════════════════════════════════
+let slicerActive = null;
+
+function buildSlicer() {
+  renderSlicerGrid(ALL_COUNTRIES);
+}
+
+function renderSlicerGrid(list) {
+  const grid = document.getElementById('slicerGrid');
+  grid.innerHTML = list.map(c =>
+    `<button class="slicer-btn${slicerActive===c?' active':''}" onclick="selectCountry('${c}')" title="${c}">${c.replace(/-/g,' ')}</button>`
+  ).join('');
+}
+
+function filterSlicer() {
+  const q = document.getElementById('slicerSearch').value.toLowerCase();
+  const filtered = ALL_COUNTRIES.filter(c => c.toLowerCase().includes(q));
+  renderSlicerGrid(filtered);
+}
+
+function selectCountry(country) {
+  slicerActive = slicerActive === country ? null : country;
+  filterSlicer();
+  const result = document.getElementById('slicerResult');
+  if (!slicerActive) { result.style.display = 'none'; return; }
+  const cd = COUNTRY_DATA[country];
+  if (!cd) return;
+  result.style.display = 'block';
+  document.getElementById('srCountry').textContent = country.replace(/-/g,' ');
+  document.getElementById('srCases').textContent    = fmtFull(cd.cases);
+  document.getElementById('srDeaths').textContent   = fmtFull(cd.deaths) ;
+  document.getElementById('srRecovered').textContent= fmtFull(cd.recovered);
+}
+</script>
+</body>
+</html>
