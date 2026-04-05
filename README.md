@@ -14,4 +14,4 @@ Real-time data visualization of mortality and recovery rates.
 
 Data Source: covid-19 dataset from Kaggle.
 
-AI Collaboration: "This project was developed as a collaboration between human direction and AI assistance to explore advanced data visualization techniques."
+AI Collaboration: This project was developed as a collaboration between human direction and AI assistance to explore advanced data visualization techniques.
